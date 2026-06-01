@@ -3,7 +3,7 @@ import json
 import os
 from telebot.types import InlineKeyboardMarkup, InlineKeyboardButton
 
-BOT_TOKEN = "8824206791:AAGMJWQMD_mG6Io1VfHtLWaQ04qxKlowsAE"
+BOT_TOKEN = 8824206791:AAFbsQUeDE6X8S3FF8hozaQq5V4--ZWAYgw
 ANIME_CHANNEL = -1003834530984
 ADMIN_ID = 8485318962
 
