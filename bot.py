@@ -3,7 +3,7 @@ import json
 import os
 from telebot.types import InlineKeyboardMarkup, InlineKeyboardButton
 
-BOT_TOKEN = "8824206791:AAFbsQUeDE6X8S3FF8hozaQq5V4--ZWAYgw"
+BOT_TOKEN = "8824206791:AAGMJWQMD_mG6Io1VfHtLWaQ04qxKlowsAE"
 ANIME_CHANNEL = -1003834530984
 ADMIN_ID = 8485318962
 
@@ -24,6 +24,7 @@ def save_json(filename, data):
 required_channels = load_json("channels.json", [])
 view_channels = load_json("view.json", {})
 anime_channels = load_json("anime_channels.json", {})  # {kod: kanal_id}
+anime_messages = load_json("anime_messages.json", {})  # {kod: {qism: msg_id}}
 users = load_json("users.json", {})
 banned_users = load_json("banned.json", [])
 
@@ -62,25 +63,6 @@ def sub_keyboard(channels):
     markup.add(InlineKeyboardButton("✅ Tekshirish", callback_data="check"))
     return markup
 
-def get_all_message_ids(channel_id):
-    """Kanaldagi barcha xabar IDlarini olish"""
-    ids = []
-    try:
-        # Kanalning eng oxirgi xabarini topamiz
-        chat = bot.get_chat(channel_id)
-        # Oxirgi post IDni topish uchun yuqori chegaradan qidirish
-        # Telegram API orqali forward qilib tekshiramiz
-        for i in range(1, 10000):
-            try:
-                msg = bot.forward_message(chat_id=ADMIN_ID, from_chat_id=channel_id, message_id=i, disable_notification=True)
-                ids.append(i)
-                bot.delete_message(ADMIN_ID, msg.message_id)
-            except:
-                pass
-    except:
-        pass
-    return ids
-
 # ==================== OBUNA TEKSHIRISH ====================
 
 @bot.callback_query_handler(func=lambda call: call.data == "check")
@@ -94,75 +76,39 @@ def check_callback(call):
 
 # ==================== ANIME SAHIFALASH ====================
 
-@bot.callback_query_handler(func=lambda call: call.data.startswith("anime_next:") or call.data.startswith("anime_prev:"))
-def anime_page_callback(call):
+@bot.callback_query_handler(func=lambda call: call.data.startswith("ep:"))
+def episode_callback(call):
+    # ep:kod:qism
     parts = call.data.split(":")
-    action = parts[0]
-    channel_id = int(parts[1])
-    current_id = int(parts[2])
-    max_id = int(parts[3])
+    kod = parts[1]
+    qism = int(parts[2])
 
-    if action == "anime_next":
-        next_id = current_id + 1
-        # Keyingi mavjud postni topamiz
-        found = False
-        for msg_id in range(next_id, max_id + 1):
-            try:
-                markup = InlineKeyboardMarkup()
-                if msg_id < max_id:
-                    markup.add(
-                        InlineKeyboardButton("⬅️ Oldingi", callback_data=f"anime_prev:{channel_id}:{msg_id}:{max_id}"),
-                        InlineKeyboardButton("Keyingisi ➡️", callback_data=f"anime_next:{channel_id}:{msg_id}:{max_id}")
-                    )
-                else:
-                    markup.add(
-                        InlineKeyboardButton("⬅️ Oldingi", callback_data=f"anime_prev:{channel_id}:{msg_id}:{max_id}")
-                    )
-                    markup.add(InlineKeyboardButton("✅ Tugadi", callback_data="end"))
+    messages = anime_messages.get(kod, {})
+    total = len(messages)
+    channel_id = anime_channels.get(kod)
 
-                bot.forward_message(call.message.chat.id, channel_id, msg_id)
-                bot.send_message(call.message.chat.id,
-                    f"📺 {msg_id}/{max_id}-qism",
-                    reply_markup=markup)
-                found = True
-                break
-            except:
-                next_id += 1
-                continue
+    if not channel_id or str(qism) not in messages:
+        bot.answer_callback_query(call.id, "❌ Topilmadi!")
+        return
 
-        if not found:
-            bot.answer_callback_query(call.id, "❌ Keyingi topilmadi!")
-            return
+    msg_id = messages[str(qism)]
 
-    elif action == "anime_prev":
-        prev_id = current_id - 1
-        found = False
-        for msg_id in range(prev_id, 0, -1):
-            try:
-                markup = InlineKeyboardMarkup()
-                if msg_id > 1:
-                    markup.add(
-                        InlineKeyboardButton("⬅️ Oldingi", callback_data=f"anime_prev:{channel_id}:{msg_id}:{max_id}"),
-                        InlineKeyboardButton("Keyingisi ➡️", callback_data=f"anime_next:{channel_id}:{msg_id}:{max_id}")
-                    )
-                else:
-                    markup.add(
-                        InlineKeyboardButton("Keyingisi ➡️", callback_data=f"anime_next:{channel_id}:{msg_id}:{max_id}")
-                    )
+    markup = InlineKeyboardMarkup()
+    row = []
+    if qism > 1:
+        row.append(InlineKeyboardButton("⬅️ Oldingi", callback_data=f"ep:{kod}:{qism-1}"))
+    if qism < total:
+        row.append(InlineKeyboardButton("Keyingisi ➡️", callback_data=f"ep:{kod}:{qism+1}"))
+    if row:
+        markup.add(*row)
+    if qism == total:
+        markup.add(InlineKeyboardButton("✅ Tugadi", callback_data="end"))
 
-                bot.forward_message(call.message.chat.id, channel_id, msg_id)
-                bot.send_message(call.message.chat.id,
-                    f"📺 {msg_id}/{max_id}-qism",
-                    reply_markup=markup)
-                found = True
-                break
-            except:
-                prev_id -= 1
-                continue
-
-        if not found:
-            bot.answer_callback_query(call.id, "❌ Oldingi topilmadi!")
-            return
+    try:
+        bot.copy_message(call.message.chat.id, channel_id, msg_id)
+        bot.send_message(call.message.chat.id, f"📺 {qism}/{total}-qism", reply_markup=markup)
+    except Exception as e:
+        bot.send_message(call.message.chat.id, f"❌ Xatolik: {e}")
 
     bot.answer_callback_query(call.id)
 
@@ -170,14 +116,45 @@ def anime_page_callback(call):
 def end_callback(call):
     bot.answer_callback_query(call.id, "✅ Barcha qismlar tugadi!")
 
+# ==================== KANAL POSTLARINI SAQLASH ====================
+
+@bot.channel_post_handler(func=lambda m: True)
+def save_channel_post(message):
+    caption = (message.caption or message.text or "").strip()
+    if not caption:
+        return
+
+    # Format: kod_qism  masalan: 7_1, 7_2
+    parts = caption.split("_")
+    if len(parts) != 2:
+        return
+
+    kod = parts[0].strip()
+    try:
+        qism = int(parts[1].strip())
+    except ValueError:
+        return
+
+    if kod not in anime_channels:
+        return
+
+    if anime_channels[kod] != message.chat.id:
+        return
+
+    if kod not in anime_messages:
+        anime_messages[kod] = {}
+
+    anime_messages[kod][str(qism)] = message.message_id
+    save_json("anime_messages.json", anime_messages)
+    print(f"✅ Saqlandi: kod={kod}, qism={qism}, msg_id={message.message_id}")
+
 # ==================== START ====================
 
 @bot.message_handler(commands=['start'])
 def start(message):
     register_user(message.from_user)
     bot.send_message(message.chat.id,
-        "👋 Salom! Anime kodini yuboring 👇\n\n"
-        "Kod — kanal postining oxiridagi raqam")
+        "👋 Salom! Anime kodini yuboring 👇")
 
 # ==================== ADMIN: MAJBURIY KANALLAR ====================
 
@@ -273,7 +250,7 @@ def list_view(message):
             text += f"• Kod: <b>{code}</b> → {link}\n"
         bot.send_message(message.chat.id, text, parse_mode="HTML")
 
-# ==================== ADMIN: ANIME KANALLAR (YANGI) ====================
+# ==================== ADMIN: ANIME KANALLAR ====================
 
 @bot.message_handler(commands=['addanime'])
 def add_anime(message):
@@ -282,7 +259,7 @@ def add_anime(message):
     parts = message.text.split()
     if len(parts) < 3:
         bot.send_message(message.chat.id,
-            "Format: /addanime [kod] [kanal_id yoki @username]\n"
+            "Format: /addanime [kod] [kanal_id]\n"
             "Misol: /addanime 7 -1001234567890\n"
             "Yoki: /addanime 7 @animechannel")
         return
@@ -296,7 +273,12 @@ def add_anime(message):
             channel_id = int(channel)
         anime_channels[code] = channel_id
         save_json("anime_channels.json", anime_channels)
-        bot.send_message(message.chat.id, f"✅ Anime kanal qo'shildi!\nKod: <b>{code}</b>\nKanal ID: <code>{channel_id}</code>", parse_mode="HTML")
+        bot.send_message(message.chat.id,
+            f"✅ Anime kanal qo'shildi!\nKod: <b>{code}</b>\n"
+            f"Kanal ID: <code>{channel_id}</code>\n\n"
+            f"Endi kanalga video tashlang, caption ga:\n"
+            f"<code>{code}_1</code>, <code>{code}_2</code> ... yozing",
+            parse_mode="HTML")
     except Exception as e:
         bot.send_message(message.chat.id, f"❌ Xato: {e}")
 
@@ -306,13 +288,16 @@ def remove_anime(message):
         return
     parts = message.text.split()
     if len(parts) < 2:
-        bot.send_message(message.chat.id, "Format: /removeanime [kod]\nMisol: /removeanime 7")
+        bot.send_message(message.chat.id, "Format: /removeanime [kod]")
         return
     code = parts[1]
     if code in anime_channels:
         del anime_channels[code]
         save_json("anime_channels.json", anime_channels)
-        bot.send_message(message.chat.id, f"✅ Anime kanal o'chirildi! Kod: {code}")
+        if code in anime_messages:
+            del anime_messages[code]
+            save_json("anime_messages.json", anime_messages)
+        bot.send_message(message.chat.id, f"✅ O'chirildi! Kod: {code}")
     else:
         bot.send_message(message.chat.id, "❌ Bu kod topilmadi!")
 
@@ -325,11 +310,12 @@ def list_anime(message):
     else:
         text = "📋 Anime kanallar:\n\n"
         for code, ch_id in anime_channels.items():
+            count = len(anime_messages.get(code, {}))
             try:
                 chat = bot.get_chat(ch_id)
-                text += f"🎬 Kod: <b>{code}</b>\n   Kanal: {chat.title}\n   ID: <code>{ch_id}</code>\n\n"
+                text += f"🎬 Kod: <b>{code}</b>\n   Kanal: {chat.title}\n   📹 {count} ta video\n\n"
             except:
-                text += f"🎬 Kod: <b>{code}</b> → <code>{ch_id}</code>\n\n"
+                text += f"🎬 Kod: <b>{code}</b> → <code>{ch_id}</code>\n   📹 {count} ta video\n\n"
         bot.send_message(message.chat.id, text, parse_mode="HTML")
 
 # ==================== ADMIN: STATISTIKA ====================
@@ -344,7 +330,7 @@ def stats(message):
         "📊 <b>Bot statistikasi</b>\n\n"
         f"👥 Jami foydalanuvchilar: <b>{total}</b>\n"
         f"🚫 Banlanganlar: <b>{banned}</b>\n"
-        f"✅ Faol foydalanuvchilar: <b>{total - banned}</b>\n"
+        f"✅ Faol: <b>{total - banned}</b>\n"
         f"📢 Majburiy kanallar: <b>{len(required_channels)}</b>\n"
         f"🎬 Anime kanallar: <b>{len(anime_channels)}</b>\n"
         f"👁 Ko'rish kanallari: <b>{len(view_channels)}</b>"
@@ -373,7 +359,7 @@ def broadcast(message):
         except:
             fail += 1
     bot.send_message(message.chat.id,
-        f"✅ Xabar yuborildi!\n👍 Muvaffaqiyatli: {success}\n❌ Xato: {fail}")
+        f"✅ Yuborildi!\n👍 Muvaffaqiyatli: {success}\n❌ Xato: {fail}")
 
 # ==================== ADMIN: BAN / UNBAN ====================
 
@@ -389,9 +375,9 @@ def ban_user(message):
     if uid not in banned_users:
         banned_users.append(uid)
         save_json("banned.json", banned_users)
-        bot.send_message(message.chat.id, f"🚫 Foydalanuvchi banlandi! ID: {uid}")
+        bot.send_message(message.chat.id, f"🚫 Banlandi! ID: {uid}")
     else:
-        bot.send_message(message.chat.id, "Bu foydalanuvchi allaqachon banlangan!")
+        bot.send_message(message.chat.id, "Allaqachon banlangan!")
 
 @bot.message_handler(commands=['unban'])
 def unban_user(message):
@@ -405,9 +391,9 @@ def unban_user(message):
     if uid in banned_users:
         banned_users.remove(uid)
         save_json("banned.json", banned_users)
-        bot.send_message(message.chat.id, f"✅ Foydalanuvchi unbanlandi! ID: {uid}")
+        bot.send_message(message.chat.id, f"✅ Unbanlandi! ID: {uid}")
     else:
-        bot.send_message(message.chat.id, "Bu foydalanuvchi banlangan emas!")
+        bot.send_message(message.chat.id, "Banlangan emas!")
 
 # ==================== ADMIN: YORDAM ====================
 
@@ -418,9 +404,9 @@ def help_cmd(message):
     text = (
         "🛠 <b>Admin buyruqlari:</b>\n\n"
         "<b>📢 Majburiy kanallar:</b>\n"
-        "/addchannel [id] — kanal qo'shish\n"
-        "/removechannel [id] — kanal o'chirish\n"
-        "/listchannels — kanallar ro'yxati\n\n"
+        "/addchannel [id] — qo'shish\n"
+        "/removechannel [id] — o'chirish\n"
+        "/listchannels — ro'yxat\n\n"
         "<b>👁 Ko'rish kanallari:</b>\n"
         "/addview [kod] [link] — qo'shish\n"
         "/removeview [kod] — o'chirish\n"
@@ -443,15 +429,12 @@ def help_cmd(message):
 def handle_code(message):
     user_id = message.from_user.id
 
-    # Ban tekshirish
     if user_id in banned_users:
         bot.send_message(message.chat.id, "🚫 Siz botdan foydalana olmaysiz!")
         return
 
-    # Foydalanuvchini ro'yxatga olish
     register_user(message.from_user)
 
-    # Obuna tekshirish
     not_sub = check_subscription(user_id)
     if not_sub:
         bot.send_message(message.chat.id,
@@ -461,7 +444,7 @@ def handle_code(message):
 
     code = message.text.strip()
 
-    # 1. View kanal tekshirish
+    # 1. View kanal
     if code in view_channels:
         link = view_channels[code]
         markup = InlineKeyboardMarkup()
@@ -469,62 +452,38 @@ def handle_code(message):
         bot.send_message(message.chat.id, "👇 Ko'rish uchun bosing:", reply_markup=markup)
         return
 
-    # 2. Anime kanal tekshirish (sahifalab)
+    # 2. Anime kanal (caption usuli)
     if code in anime_channels:
-        channel_id = anime_channels[code]
-        # 1-postdan boshlaymiz
-        sent = False
-        for msg_id in range(1, 10000):
-            try:
-                # Kanalda nechta post borligini bilish uchun
-                # max_id ni topamiz - oxirgi mavjud postni qidiramiz
-                break
-            except:
-                continue
-
-        # Birinchi mavjud postni topamiz
-        first_id = None
-        max_id = None
-
-        # Oxirgi postni topish
-        for msg_id in range(9999, 0, -1):
-            try:
-                bot.forward_message(message.chat.id, channel_id, msg_id)
-                max_id = msg_id
-                break
-            except:
-                continue
-
-        if max_id is None:
-            bot.send_message(message.chat.id, "❌ Kanalda post topilmadi!")
+        messages = anime_messages.get(code, {})
+        if not messages:
+            bot.send_message(message.chat.id,
+                "📭 Hali video yo'q.\n"
+                f"Kanalga video tashlang, caption ga <code>{code}_1</code> yozing.",
+                parse_mode="HTML")
             return
 
-        # Birinchi postni topish
-        for msg_id in range(1, max_id + 1):
-            try:
-                # Birinchi postni foydalanuvchiga yuborish
-                bot.forward_message(message.chat.id, channel_id, msg_id)
-                first_id = msg_id
+        total = len(messages)
+        channel_id = anime_channels[code]
+        msg_id = messages.get("1")
 
-                markup = InlineKeyboardMarkup()
-                if first_id < max_id:
-                    markup.add(InlineKeyboardButton("Keyingisi ➡️", callback_data=f"anime_next:{channel_id}:{first_id}:{max_id}"))
-                else:
-                    markup.add(InlineKeyboardButton("✅ Tugadi", callback_data="end"))
+        if not msg_id:
+            bot.send_message(message.chat.id, "❌ 1-qism topilmadi!")
+            return
 
-                bot.send_message(message.chat.id,
-                    f"📺 {first_id}/{max_id}-qism",
-                    reply_markup=markup)
-                sent = True
-                break
-            except:
-                continue
+        markup = InlineKeyboardMarkup()
+        if total > 1:
+            markup.add(InlineKeyboardButton("Keyingisi ➡️", callback_data=f"ep:{code}:2"))
+        else:
+            markup.add(InlineKeyboardButton("✅ Tugadi", callback_data="end"))
 
-        if not sent:
-            bot.send_message(message.chat.id, "❌ Kanal postlari topilmadi!")
+        try:
+            bot.copy_message(message.chat.id, channel_id, msg_id)
+            bot.send_message(message.chat.id, f"📺 1/{total}-qism", reply_markup=markup)
+        except Exception as e:
+            bot.send_message(message.chat.id, f"❌ Xatolik: {e}")
         return
 
-    # 3. Asosiy ANIME_CHANNEL dan forward
+    # 3. Asosiy ANIME_CHANNEL
     try:
         post_id = int(code)
         bot.forward_message(message.chat.id, ANIME_CHANNEL, post_id)
@@ -534,4 +493,4 @@ def handle_code(message):
         bot.send_message(message.chat.id, "❌ Bunday kod topilmadi!")
 
 
-bot.polling()
+bot.polling(allowed_updates=["message", "callback_query", "channel_post"])
